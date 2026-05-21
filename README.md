@@ -1,6 +1,6 @@
 # Safe Claude Code
 
-启动 Claude Code 之前，先检查你的网络环境，避免污染 Claude Code 使用 IP 记录。
+如果你是通过静态住宅 IP 代理访问 Clade 的，启动 Claude Code 之前，先检查你的网络环境，避免污染 IP 使用记录。
 
 `safe-claude-code` 通过 [ipinfo.io](https://ipinfo.io) 拿到当前出口 IP 的地理信息，按你配置的规则做白名单校验，命中才启动 `claude`，否则打印完整 JSON 并退出。
 
@@ -30,6 +30,19 @@ curl -fsSL https://raw.githubusercontent.com/adamwoohhh/safe-claude-code/main/in
 ```bash
 curl -fsSL https://raw.githubusercontent.com/adamwoohhh/safe-claude-code/main/install.sh \
   | SCC_INSTALL_DIR=/usr/local/bin bash
+```
+
+## 使用前提
+
+确保 `ipinfo.io` 和 claude 相关的域名使用的是同一套代理规则。完整的代理教程可以参考 [Claude Code 安全使用指南](https://github.com/sakurs2/safe-claude?tab=readme-ov-file)。
+
+```yaml
+rules:
+  - DOMAIN-KEYWORD,anthropic,纯净IP代理
+  - DOMAIN-KEYWORD,claude,纯净IP代理
+  - DOMAIN-KEYWORD,ipinfo,纯净IP代理
+  - DOMAIN-KEYWORD,github,机房代理
+  - DOMAIN-KEYWORD,google,机房代理
 ```
 
 ## 用法
