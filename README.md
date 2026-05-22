@@ -10,10 +10,11 @@
 curl -fsSL https://raw.githubusercontent.com/adamwoohhh/safe-claude-code/main/install.sh | bash
 ```
 
-安装到 `~/.local/bin/` 下，同时建两个命令：
+安装到 `~/.local/bin/` 下，会建三个命令：
 
-- `safe-claude-code`（全名）
-- `scc`（短名，符号链接）
+- `safe-claude-code`（全名，主包装器）
+- `scc`（短名，`safe-claude-code` 的符号链接）
+- `scc-config`（配置管理工具，独立命令，避免和 `claude` 自己的子命令冲突）
 
 如果 `~/.local/bin` 不在 PATH，安装器会提示你加。
 
@@ -88,6 +89,27 @@ timezone=Asia/*
 
 环境变量优先于配置文件，方便临时覆盖。
 
+### 用 `scc-config` 管理配置
+
+懒得记路径或者想确认生效情况，用配套的 `scc-config`：
+
+```bash
+scc-config edit     # 在 $EDITOR 里打开 rules.conf；不存在则先生成带注释的模板
+scc-config show     # 打印合并后生效的规则（文件 + SCC_* 环境变量），并标注来源
+scc-config path     # 只打印配置文件路径
+```
+
+`scc-config show` 的输出示例：
+
+```
+# Config file: /Users/you/.config/safe-claude-code/rules.conf
+
+country=CN,HK                     # from file
+timezone=Asia/Shanghai            # from env:SCC_timezone
+```
+
+> 之所以拆成独立命令而不是做成 `scc config ...`，是为了避免和未来 `claude` 自己的子命令冲突——`scc` 永远是纯透传。
+
 ### 可用字段
 
 来自 ipinfo.io 响应的顶层字段：
@@ -123,6 +145,14 @@ timezone=Asia/*
 
 无需 `jq` 或其它工具。
 
+## 开发
+
+跑单元测试（纯 bash，无依赖，所有测试在临时目录里跑并 mock 掉 `curl` / `claude`，不会碰你 `~/.config/` 或 `~/.local/bin/`）：
+
+```bash
+./test.sh
+```
+
 ## 升级 / 卸载
 
 ```bash
@@ -130,5 +160,5 @@ timezone=Asia/*
 curl -fsSL https://raw.githubusercontent.com/adamwoohhh/safe-claude-code/main/install.sh | bash
 
 # 卸载
-rm ~/.local/bin/safe-claude-code ~/.local/bin/scc
+rm ~/.local/bin/safe-claude-code ~/.local/bin/scc ~/.local/bin/scc-config
 ```
