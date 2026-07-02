@@ -10,7 +10,36 @@ export type Feature = {
   path: string;
   selected: boolean;
   group: string;
+  lockedGroup?: {
+    key: string;
+    label?: string;
+  };
 };
+
+const skillLockFiles = ['.skill-lock.json', 'skill-lock.json', 'skills-lock.json'];
+const skillNameFields = ['skill', 'skillName', 'skill_name', 'name', 'id'];
+const skillGroupLabelFields = [
+  'group',
+  'pluginName',
+  'plugin_name',
+  'pluginId',
+  'plugin_id',
+  'package',
+  'packageName',
+  'package_name',
+  'bundle',
+  'namespace'
+];
+const skillGroupFields = [
+  'plugin',
+  'source',
+  'sourceName',
+  'source_name',
+  'sourceUrl',
+  'source_url',
+  ...skillGroupLabelFields
+];
+const containerKeys = new Set(['skills', 'skill', 'plugins', 'plugin', 'sources', 'packages', 'groups']);
 
 async function pathExists(filePath: string): Promise<boolean> {
   try {
@@ -29,12 +58,150 @@ async function realDir(dir: string): Promise<string | undefined> {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringField(record: Record<string, unknown>, fields: string[]): string | undefined {
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function assignSkillGroup(
+  groups: Map<string, {key: string; label?: string}>,
+  skill: string,
+  group: string,
+  label?: string
+): void {
+  const normalizedSkill = skill.trim();
+  const normalizedGroup = group.trim();
+  if (normalizedSkill && normalizedGroup && normalizedSkill !== normalizedGroup) {
+    groups.set(normalizedSkill, {key: normalizedGroup, label});
+  }
+}
+
+function assignSkillsFromValue(
+  groups: Map<string, {key: string; label?: string}>,
+  value: unknown,
+  group: string,
+  label?: string
+): void {
+  if (typeof value === 'string') {
+    assignSkillGroup(groups, value, group, label);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      assignSkillsFromValue(groups, item, group, label);
+    }
+    return;
+  }
+  if (isRecord(value)) {
+    const skill = stringField(value, skillNameFields);
+    if (skill) {
+      assignSkillGroup(groups, skill, group, label);
+    }
+  }
+}
+
+function collectSkillLockGroups(
+  value: unknown,
+  groups: Map<string, {key: string; label?: string}>,
+  parentKey?: string
+): void {
+  if (Array.isArray(value)) {
+    if (parentKey && !containerKeys.has(parentKey)) {
+      assignSkillsFromValue(groups, value, parentKey);
+    }
+    for (const item of value) {
+      collectSkillLockGroups(item, groups);
+    }
+    return;
+  }
+  if (!isRecord(value)) {
+    return;
+  }
+
+  const group = stringField(value, skillGroupFields)
+    ?? (parentKey && !containerKeys.has(parentKey) ? parentKey : undefined);
+  const label = stringField(value, skillGroupLabelFields);
+  const skill = stringField(value, skillNameFields);
+  if (group && skill) {
+    assignSkillGroup(groups, skill, group, label);
+  }
+  if (group && parentKey && !containerKeys.has(parentKey)) {
+    assignSkillGroup(groups, parentKey, group, label);
+  }
+  if (group && 'skills' in value) {
+    assignSkillsFromValue(groups, value.skills, group, label);
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    collectSkillLockGroups(child, groups, key);
+  }
+}
+
+async function readSkillLockGroups(root: string): Promise<Map<string, {key: string; label?: string}>> {
+  const groups = new Map<string, {key: string; label?: string}>();
+  const roots = [path.dirname(root), root];
+  for (const lockRoot of roots) {
+    for (const file of skillLockFiles) {
+      const raw = await readFile(path.join(lockRoot, file), 'utf8').catch(() => '');
+      if (!raw) {
+        continue;
+      }
+      try {
+        collectSkillLockGroups(JSON.parse(raw), groups);
+      } catch {
+        continue;
+      }
+    }
+  }
+  return groups;
+}
+
+function sourceSlug(source: string): string {
+  const trimmed = source.trim().replace(/\.git$/, '');
+  if (trimmed.includes('/')) {
+    return trimmed.split('/').filter(Boolean).at(-1) ?? trimmed;
+  }
+  return trimmed;
+}
+
+function commonPrefix(features: Feature[]): string | undefined {
+  const prefixes = new Set(features.map(prefixFor));
+  return prefixes.size === 1 ? [...prefixes][0] : undefined;
+}
+
+function lockedGroupLabel(group: {key: string; label?: string}, members: Feature[]): string {
+  const memberLabel = members
+    .map(member => member.lockedGroup?.label)
+    .find(label => label && label.trim());
+  if (memberLabel) {
+    return memberLabel;
+  }
+  if (group.key.includes('/')) {
+    return sourceSlug(group.key);
+  }
+  const prefix = commonPrefix(members);
+  if (prefix) {
+    return prefix;
+  }
+  return sourceSlug(group.key);
+}
+
 async function discoverSkillDir(root: string): Promise<Feature[]> {
   if (!(await pathExists(root))) {
     return [];
   }
 
   const features: Feature[] = [];
+  const lockedGroups = await readSkillLockGroups(root);
   const entries = await readdir(root, {withFileTypes: true});
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) {
@@ -53,7 +220,8 @@ async function discoverSkillDir(root: string): Promise<Feature[]> {
         name: entry.name,
         path: resolved,
         selected: true,
-        group: 'skill'
+        group: 'skill',
+        lockedGroup: lockedGroups.get(entry.name)
       });
       continue;
     }
@@ -68,12 +236,14 @@ async function discoverSkillDir(root: string): Promise<Feature[]> {
       if (!childResolved || !(await pathExists(path.join(childResolved, 'SKILL.md')))) {
         continue;
       }
+      const name = `${entry.name}:${child.name}`;
       features.push({
         type: 'skill',
-        name: `${entry.name}:${child.name}`,
+        name,
         path: childResolved,
         selected: true,
-        group: 'skill'
+        group: 'skill',
+        lockedGroup: lockedGroups.get(name) ?? lockedGroups.get(child.name) ?? lockedGroups.get(entry.name)
       });
     }
   }
@@ -198,7 +368,29 @@ function prefixFor(feature: Feature): string {
 }
 
 export function groupFeatures(features: Feature[]): Feature[] {
-  return features.map(feature => {
+  const lockedMembers = new Map<string, Feature[]>();
+  for (const feature of features) {
+    if (feature.type !== 'skill' || !feature.lockedGroup) {
+      continue;
+    }
+    lockedMembers.set(feature.lockedGroup.key, [...(lockedMembers.get(feature.lockedGroup.key) ?? []), feature]);
+  }
+
+  const grouped = features.map(feature => {
+    if (feature.type === 'skill' && feature.lockedGroup) {
+      const members = lockedMembers.get(feature.lockedGroup.key) ?? [];
+      if (members.length < 2) {
+        return {
+          ...feature,
+          group: 'skill'
+        };
+      }
+      return {
+        ...feature,
+        group: `skill:${lockedGroupLabel(feature.lockedGroup, members)}`
+      };
+    }
+
     const prefix = prefixFor(feature);
     const matches = features.filter(candidate => {
       if (candidate.type !== feature.type) {
@@ -215,6 +407,22 @@ export function groupFeatures(features: Feature[]): Feature[] {
       ...feature,
       group: matches > 1 ? `${feature.type}:${prefix}` : feature.type
     };
+  });
+
+  return grouped.sort((a, b) => {
+    const rank = typeRank(a.type) - typeRank(b.type);
+    if (rank !== 0) {
+      return rank;
+    }
+    const groupOrder = a.group.localeCompare(b.group);
+    if (groupOrder !== 0) {
+      return groupOrder;
+    }
+    const nameOrder = baseName(a).localeCompare(baseName(b));
+    if (nameOrder !== 0) {
+      return nameOrder;
+    }
+    return a.name.localeCompare(b.name);
   });
 }
 

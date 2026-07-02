@@ -75,9 +75,123 @@ describe('feature discovery', () => {
     ]);
     expect(features[0]?.path).toBe(realBrainstorming);
   });
+
+  it('groups skills by lock file before falling back to inferred groups', async () => {
+    const home = await tempHome();
+    const agentsRoot = path.join(home, '.agents');
+    const skillRoot = path.join(agentsRoot, 'skills');
+    await addSkill(skillRoot, 'lark-workflow-meeting-summary');
+    await addSkill(skillRoot, 'lark-workflow-standup-report');
+    await addSkill(skillRoot, 'solo');
+    await mkdir(agentsRoot, {recursive: true});
+    await writeFile(path.join(agentsRoot, '.skill-lock.json'), JSON.stringify({
+      version: 3,
+      skills: {
+        'lark-workflow-meeting-summary': {source: 'open.feishu.cn'},
+        'lark-workflow-standup-report': {source: 'open.feishu.cn'}
+      }
+    }));
+
+    const features = await discoverFeatures('codex', home);
+
+    expect(features.map(feature => `${feature.name}:${feature.group}`)).toEqual([
+      'solo:skill',
+      'lark-workflow-meeting-summary:skill:lark',
+      'lark-workflow-standup-report:skill:lark'
+    ]);
+  });
+
+  it('uses pluginName from the lock file as the group label when present', async () => {
+    const home = await tempHome();
+    const agentsRoot = path.join(home, '.agents');
+    const skillRoot = path.join(agentsRoot, 'skills');
+    await addSkill(skillRoot, 'ask-matt');
+    await addSkill(skillRoot, 'codebase-design');
+    await mkdir(agentsRoot, {recursive: true});
+    await writeFile(path.join(agentsRoot, '.skill-lock.json'), JSON.stringify({
+      version: 3,
+      skills: {
+        'ask-matt': {source: 'mattpocock/skills', pluginName: 'mattpocock-skills'},
+        'codebase-design': {source: 'mattpocock/skills', pluginName: 'mattpocock-skills'}
+      }
+    }));
+
+    const features = await discoverFeatures('codex', home);
+
+    expect(features.map(feature => `${feature.name}:${feature.group}`)).toEqual([
+      'ask-matt:skill:mattpocock-skills',
+      'codebase-design:skill:mattpocock-skills'
+    ]);
+  });
+
+  it('uses one label for all skills from the same lock source', async () => {
+    const home = await tempHome();
+    const agentsRoot = path.join(home, '.agents');
+    const skillRoot = path.join(agentsRoot, 'skills');
+    await addSkill(skillRoot, 'ask-matt');
+    await addSkill(skillRoot, 'review');
+    await mkdir(agentsRoot, {recursive: true});
+    await writeFile(path.join(agentsRoot, '.skill-lock.json'), JSON.stringify({
+      version: 3,
+      skills: {
+        'ask-matt': {source: 'mattpocock/skills', pluginName: 'mattpocock-skills'},
+        review: {source: 'mattpocock/skills'}
+      }
+    }));
+
+    const features = await discoverFeatures('codex', home);
+
+    expect(features.map(feature => `${feature.name}:${feature.group}`)).toEqual([
+      'ask-matt:skill:mattpocock-skills',
+      'review:skill:mattpocock-skills'
+    ]);
+  });
+
+  it('uses the source repo name as the group label for github lock sources', async () => {
+    const home = await tempHome();
+    const agentsRoot = path.join(home, '.agents');
+    const skillRoot = path.join(agentsRoot, 'skills');
+    await addSkill(skillRoot, 'feishu-cli-api');
+    await addSkill(skillRoot, 'feishu-cli-doc');
+    await mkdir(agentsRoot, {recursive: true});
+    await writeFile(path.join(agentsRoot, '.skill-lock.json'), JSON.stringify({
+      version: 3,
+      skills: {
+        'feishu-cli-api': {source: 'riba2534/feishu-cli'},
+        'feishu-cli-doc': {source: 'riba2534/feishu-cli'}
+      }
+    }));
+
+    const features = await discoverFeatures('codex', home);
+
+    expect(features.map(feature => `${feature.name}:${feature.group}`)).toEqual([
+      'feishu-cli-api:skill:feishu-cli',
+      'feishu-cli-doc:skill:feishu-cli'
+    ]);
+  });
 });
 
 describe('feature grouping and args', () => {
+  it('keeps features from the same group contiguous after grouping', () => {
+    const grouped = groupFeatures(sortFeatures([
+      {type: 'skill', name: 'alpha', path: '/s1', selected: true, group: 'skill'},
+      {type: 'skill', name: 'lark-doc', path: '/s2', selected: true, group: 'skill', lockedGroup: {key: 'open.feishu.cn'}},
+      {type: 'skill', name: 'solo', path: '/s3', selected: true, group: 'skill'},
+      {type: 'skill', name: 'lark-drive', path: '/s4', selected: true, group: 'skill', lockedGroup: {key: 'open.feishu.cn'}}
+    ]));
+
+    const seen = new Set<string>();
+    let previousGroup = '';
+    for (const feature of grouped) {
+      if (feature.group === previousGroup) {
+        continue;
+      }
+      expect(seen.has(feature.group)).toBe(false);
+      seen.add(feature.group);
+      previousGroup = feature.group;
+    }
+  });
+
   it('sorts by type then display name and groups shared prefixes', () => {
     const sorted = groupFeatures(sortFeatures([
       {type: 'plugin', name: 'official:lark-im', path: '/p1', selected: true, group: 'plugin'},

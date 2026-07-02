@@ -98,6 +98,8 @@ Claude Code：
 
 如果 skill 目录是软链，`al` 会解析真实目录，并用真实的 `SKILL.md` 路径生成禁用配置。对于 bundle 目录，例如 `~/.agents/skills/superpowers -> ~/.codex/superpowers/skills`，会继续读取下一层的 `*/SKILL.md`，展示为 `superpowers:brainstorming` 这类名称。
 
+Skill 分组优先读取 skill 根目录的上一级或根目录内的 `.skill-lock.json`、`skill-lock.json`、`skills-lock.json`，例如 `~/.agents/.skill-lock.json`。lock 文件里同一 `source` 或 `pluginName` 的 skills 会优先归为同组；lock 文件不存在或没有对应记录时，再按 plugin / marketplace 信息和 skill name 前缀推断分组。
+
 ## 禁用方式
 
 Codex 反选 skills / plugins 会转成启动参数：
