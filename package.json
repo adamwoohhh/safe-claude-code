@@ -1,0 +1,36 @@
+{
+  "name": "agent-launcher",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "README.md"
+  ],
+  "type": "module",
+  "bin": {
+    "agent-launch": "./dist/cli.js",
+    "al": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc",
+    "test": "vitest run",
+    "dev": "tsx src/cli.tsx",
+    "start": "node dist/cli.js",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "ink": "^5.2.1",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

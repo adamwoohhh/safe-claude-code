@@ -1,50 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${SCC_REPO:-adamwoohhh/safe-claude-code}"
-REF="${SCC_REF:-main}"
-INSTALL_DIR="${SCC_INSTALL_DIR:-$HOME/.local/bin}"
-SCRIPT_URL="https://raw.githubusercontent.com/$REPO/$REF/safe-claude-code.sh"
+REPO="${AGENT_LAUNCHER_REPO:-${SCC_REPO:-adamwoohhh/agent-launcher}}"
+REF="${AGENT_LAUNCHER_REF:-${SCC_REF:-main}}"
+PACKAGE_SPEC="github:$REPO#$REF"
 
-err() { echo "❌ $*" >&2; exit 1; }
+err() { echo "Error: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
 
-command -v curl >/dev/null 2>&1 || err "curl is required"
-command -v bash >/dev/null 2>&1 || err "bash is required"
+command -v node >/dev/null 2>&1 || err "node is required"
+command -v npm >/dev/null 2>&1 || err "npm is required"
 
-info "Installing from $SCRIPT_URL"
-info "Target dir:    $INSTALL_DIR"
+node -e 'const [major] = process.versions.node.split(".").map(Number); process.exit(major >= 20 ? 0 : 1)' \
+  || err "Node.js 20 or newer is required"
 
-mkdir -p "$INSTALL_DIR"
+info "Installing $PACKAGE_SPEC"
+npm install -g "$PACKAGE_SPEC"
 
-TARGET="$INSTALL_DIR/agent-launch"
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
+PREFIX="$(npm prefix -g)"
+BIN_DIR="$PREFIX/bin"
+rm -f "$BIN_DIR/safe-claude-code" "$BIN_DIR/scc" "$BIN_DIR/scc-config"
 
-curl -fsSL "$SCRIPT_URL" -o "$TMP" || err "Download failed: $SCRIPT_URL"
-
-head -n1 "$TMP" | grep -q '^#!/usr/bin/env bash$' || err "Downloaded file doesn't look like the script"
-
-mv "$TMP" "$TARGET"
-chmod +x "$TARGET"
-
-ln -sf agent-launch "$INSTALL_DIR/al"
-rm -f "$INSTALL_DIR/safe-claude-code" "$INSTALL_DIR/scc" "$INSTALL_DIR/scc-config"
-
-info "Installed:"
-info "  $TARGET"
-info "  $INSTALL_DIR/al -> agent-launch"
+info "Installed commands:"
+info "  agent-launch"
+info "  al"
 
 case ":$PATH:" in
-  *":$INSTALL_DIR:"*)
-    info "$INSTALL_DIR is already in your PATH."
+  *":$BIN_DIR:"*)
+    info "$BIN_DIR is already in your PATH."
     ;;
   *)
     echo
-    echo "⚠️  $INSTALL_DIR is NOT in your PATH."
-    echo "    Add this to ~/.zshrc or ~/.bashrc:"
+    echo "Warning: $BIN_DIR is NOT in your PATH."
+    echo "Add this to your shell profile:"
     echo
-    echo "      export PATH=\"$INSTALL_DIR:\$PATH\""
+    echo "  export PATH=\"$BIN_DIR:\$PATH\""
     echo
     ;;
 esac
@@ -52,7 +42,6 @@ esac
 cat <<'USAGE'
 
 Quick start:
-  # Select codex or claude, review startup check, then confirm launch
   al
 
 Re-run this installer anytime to update.
