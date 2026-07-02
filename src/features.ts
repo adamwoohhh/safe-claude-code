@@ -165,6 +165,31 @@ async function readSkillLockGroups(root: string): Promise<Map<string, {key: stri
   return groups;
 }
 
+function agentsSkillRootFromPath(filePath: string): string | undefined {
+  const resolved = path.resolve(filePath);
+  const parts = resolved.split(path.sep);
+  const agentsIndex = parts.findIndex((part, index) => part === '.agents' && parts[index + 1] === 'skills');
+  if (agentsIndex < 0) {
+    return undefined;
+  }
+  return path.join(path.sep, ...parts.slice(1, agentsIndex + 2));
+}
+
+async function lockGroupsForResolvedPath(
+  baseGroups: Map<string, {key: string; label?: string}>,
+  resolvedPath: string
+): Promise<Map<string, {key: string; label?: string}>> {
+  const agentsSkillRoot = agentsSkillRootFromPath(resolvedPath);
+  if (!agentsSkillRoot) {
+    return baseGroups;
+  }
+
+  return new Map([
+    ...baseGroups,
+    ...(await readSkillLockGroups(agentsSkillRoot))
+  ]);
+}
+
 function sourceSlug(source: string): string {
   const trimmed = source.trim().replace(/\.git$/, '');
   if (trimmed.includes('/')) {
@@ -213,6 +238,7 @@ async function discoverSkillDir(root: string): Promise<Feature[]> {
     if (!resolved) {
       continue;
     }
+    const entryLockedGroups = await lockGroupsForResolvedPath(lockedGroups, resolved);
 
     if (await pathExists(path.join(resolved, 'SKILL.md'))) {
       features.push({
@@ -221,7 +247,7 @@ async function discoverSkillDir(root: string): Promise<Feature[]> {
         path: resolved,
         selected: true,
         group: 'skill',
-        lockedGroup: lockedGroups.get(entry.name)
+        lockedGroup: entryLockedGroups.get(entry.name)
       });
       continue;
     }
@@ -243,7 +269,7 @@ async function discoverSkillDir(root: string): Promise<Feature[]> {
         path: childResolved,
         selected: true,
         group: 'skill',
-        lockedGroup: lockedGroups.get(name) ?? lockedGroups.get(child.name) ?? lockedGroups.get(entry.name)
+        lockedGroup: entryLockedGroups.get(name) ?? entryLockedGroups.get(child.name) ?? entryLockedGroups.get(entry.name)
       });
     }
   }

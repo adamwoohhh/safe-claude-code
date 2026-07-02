@@ -1,7 +1,7 @@
 import React, {useMemo, useState} from 'react';
 import {Box, render, Text, useApp, useInput} from 'ink';
 import type {CliName, Feature} from './features.js';
-import type {DetectedCli} from './launcher.js';
+import type {DetectedCli, NetworkInfo, ProxyType} from './launcher.js';
 
 type Resolver<T> = (value: T) => void;
 
@@ -194,7 +194,22 @@ function FeatureSelector({features: initialFeatures, resolve}: {features: Featur
   );
 }
 
-function Confirm({cli, ipInfo, resolve}: {cli: CliName; ipInfo: string; resolve: Resolver<boolean>}) {
+function proxyTypeLabel(proxyType: ProxyType): string {
+  switch (proxyType) {
+    case 'no-proxy':
+      return 'no proxy';
+    case 'http-proxy':
+      return 'HTTP proxy';
+    case 'socks5-proxy':
+      return 'SOCKS5 proxy';
+    case 'virtual-nic-proxy':
+      return 'virtual NIC proxy';
+    case 'unknown':
+      return 'unknown';
+  }
+}
+
+function Confirm({cli, networkInfo, resolve}: {cli: CliName; networkInfo: NetworkInfo; resolve: Resolver<boolean>}) {
   const {exit} = useApp();
 
   useInput((input, key) => {
@@ -211,10 +226,37 @@ function Confirm({cli, ipInfo, resolve}: {cli: CliName; ipInfo: string; resolve:
 
   return (
     <Box flexDirection="column">
-      <Text>IPinfo response:</Text>
-      <Text>{ipInfo}</Text>
+      <Text>Public IP check:</Text>
+      <Text>{networkInfo.publicIpInfo}</Text>
+      <Text> </Text>
+      <Text>Local proxy type: {proxyTypeLabel(networkInfo.proxyType)}</Text>
       <Text> </Text>
       <Text>Continue and launch {cli}? [Y/n]</Text>
+    </Box>
+  );
+}
+
+function NetworkFailure({message, resolve}: {message: string; resolve: Resolver<boolean>}) {
+  const {exit} = useApp();
+
+  useInput((input, key) => {
+    if (input === 'y' || input === 'Y') {
+      resolve(true);
+      exit();
+      return;
+    }
+    if (key.return || input === 'n' || input === 'N') {
+      resolve(false);
+      exit();
+    }
+  });
+
+  return (
+    <Box flexDirection="column">
+      <Text>Public IP check failed:</Text>
+      <Text>{message}</Text>
+      <Text> </Text>
+      <Text>Ignore this failure and continue? [y/N]</Text>
     </Box>
   );
 }
@@ -244,6 +286,10 @@ export async function promptFeatures(features: Feature[], _cli: CliName): Promis
   return selected;
 }
 
-export async function promptConfirm(cli: CliName, ipInfo: string): Promise<boolean> {
-  return await renderPrompt<boolean>(<Confirm cli={cli} ipInfo={ipInfo} resolve={() => undefined} />);
+export async function promptConfirm(cli: CliName, networkInfo: NetworkInfo): Promise<boolean> {
+  return await renderPrompt<boolean>(<Confirm cli={cli} networkInfo={networkInfo} resolve={() => undefined} />);
+}
+
+export async function promptNetworkFailure(message: string): Promise<boolean> {
+  return await renderPrompt<boolean>(<NetworkFailure message={message} resolve={() => undefined} />);
 }

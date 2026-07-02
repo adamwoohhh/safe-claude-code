@@ -2,7 +2,7 @@ import {mkdtemp, mkdir, realpath, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {detectClis, invalidDebugValue, planLaunch} from './launcher.js';
+import {detectClis, detectLocalProxyType, invalidDebugValue, planLaunch} from './launcher.js';
 
 let tempRoots: string[] = [];
 
@@ -45,7 +45,8 @@ describe('launcher planning', () => {
       selectCli: vi.fn(),
       selectFeatures: vi.fn(),
       confirm: vi.fn(),
-      fetchIpInfo: vi.fn()
+      confirmNetworkFailure: vi.fn(),
+      checkNetwork: vi.fn()
     })).rejects.toThrow('No supported CLI found');
   });
 
@@ -64,19 +65,54 @@ describe('launcher planning', () => {
       selectCli: vi.fn(),
       selectFeatures: vi.fn(async features => features.map(feature => ({...feature, selected: false}))),
       confirm: vi.fn(async () => true),
-      fetchIpInfo: vi.fn(async () => '{"ip":"1.2.3.4"}')
+      confirmNetworkFailure: vi.fn(),
+      checkNetwork: vi.fn(async () => ({
+        publicIpInfo: 'IP\t: 1.2.3.4\n地址\t: 中国',
+        proxyType: 'no-proxy'
+      }))
     });
     const realSkillDir = await realpath(skillDir);
 
     expect(plan).toEqual({
       cli: {name: 'codex', path: codex},
       args: ['-c', `skills.config=[{path="${realSkillDir}/SKILL.md",enabled=false}]`, '--foo'],
-      ipInfo: '{"ip":"1.2.3.4"}',
+      networkInfo: {
+        publicIpInfo: 'IP\t: 1.2.3.4\n地址\t: 中国',
+        proxyType: 'no-proxy'
+      },
       debugCommand: undefined
     });
   });
 
-  it('rejects non-json IP check responses and cancelled confirmations', async () => {
+  it('lets users ignore failed public IP checks and continue', async () => {
+    const home = await tempDir();
+    const bin = path.join(home, 'bin');
+    await mkdir(bin);
+    await fakeExecutable(bin, 'claude');
+    const confirmNetworkFailure = vi.fn(async () => true);
+    const confirm = vi.fn(async () => true);
+
+    const plan = await planLaunch({
+      argv: [],
+      env: {PATH: bin, HOME: home},
+      selectCli: vi.fn(),
+      selectFeatures: vi.fn(),
+      confirm,
+      confirmNetworkFailure,
+      checkNetwork: vi.fn(async () => {
+        throw new Error('curl exited with code 28');
+      })
+    });
+
+    expect(confirmNetworkFailure).toHaveBeenCalledWith('curl exited with code 28');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(plan.networkInfo).toEqual({
+      publicIpInfo: 'Public IP check skipped after failure: curl exited with code 28',
+      proxyType: 'unknown'
+    });
+  });
+
+  it('rejects cancelled confirmations', async () => {
     const home = await tempDir();
     const bin = path.join(home, 'bin');
     await mkdir(bin);
@@ -87,18 +123,20 @@ describe('launcher planning', () => {
       env: {PATH: bin, HOME: home},
       selectCli: vi.fn(),
       selectFeatures: vi.fn(),
-      confirm: vi.fn(async () => true),
-      fetchIpInfo: vi.fn(async () => 'nope')
-    })).rejects.toThrow('Invalid JSON');
-
-    await expect(planLaunch({
-      argv: [],
-      env: {PATH: bin, HOME: home},
-      selectCli: vi.fn(),
-      selectFeatures: vi.fn(),
       confirm: vi.fn(async () => false),
-      fetchIpInfo: vi.fn(async () => '{"ip":"1.2.3.4"}')
+      confirmNetworkFailure: vi.fn(),
+      checkNetwork: vi.fn(async () => ({
+        publicIpInfo: 'IP\t: 1.2.3.4',
+        proxyType: 'no-proxy'
+      }))
     })).rejects.toThrow('Cancelled');
+  });
+
+  it('detects proxy type from environment and virtual network interfaces', () => {
+    expect(detectLocalProxyType({}, {})).toBe('no-proxy');
+    expect(detectLocalProxyType({HTTPS_PROXY: 'http://127.0.0.1:7890'}, {})).toBe('http-proxy');
+    expect(detectLocalProxyType({ALL_PROXY: 'socks5://127.0.0.1:7891'}, {})).toBe('socks5-proxy');
+    expect(detectLocalProxyType({}, {utun4: [{address: '10.0.0.2', family: 'IPv4', internal: false}]})).toBe('virtual-nic-proxy');
   });
 
   it('recognizes false-like debug values', () => {

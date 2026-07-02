@@ -169,6 +169,39 @@ describe('feature discovery', () => {
       'feishu-cli-doc:skill:feishu-cli'
     ]);
   });
+
+  it('uses agents skill lock groups for Claude skills symlinked from agents skills', async () => {
+    const home = await tempHome();
+    const agentsRoot = path.join(home, '.agents');
+    const agentsSkillRoot = path.join(agentsRoot, 'skills');
+    const claudeSkillRoot = path.join(home, '.claude/skills');
+    await addSkill(agentsSkillRoot, 'ask-matt');
+    await addSkill(agentsSkillRoot, 'codebase-design');
+    await mkdir(agentsRoot, {recursive: true});
+    await mkdir(claudeSkillRoot, {recursive: true});
+    await symlink(
+      path.join(agentsSkillRoot, 'ask-matt'),
+      path.join(claudeSkillRoot, 'ask-matt')
+    );
+    await symlink(
+      path.join(agentsSkillRoot, 'codebase-design'),
+      path.join(claudeSkillRoot, 'codebase-design')
+    );
+    await writeFile(path.join(agentsRoot, '.skill-lock.json'), JSON.stringify({
+      version: 3,
+      skills: {
+        'ask-matt': {source: 'mattpocock/skills', pluginName: 'mattpocock-skills'},
+        'codebase-design': {source: 'mattpocock/skills', pluginName: 'mattpocock-skills'}
+      }
+    }));
+
+    const features = await discoverFeatures('claude', home);
+
+    expect(features.map(feature => `${feature.name}:${feature.group}`)).toEqual([
+      'ask-matt:skill:mattpocock-skills',
+      'codebase-design:skill:mattpocock-skills'
+    ]);
+  });
 });
 
 describe('feature grouping and args', () => {

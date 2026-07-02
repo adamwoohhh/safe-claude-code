@@ -1,23 +1,27 @@
 #!/usr/bin/env node
-import {spawn} from 'node:child_process';
-import {planLaunch} from './launcher.js';
-import {promptCli, promptConfirm, promptFeatures} from './ui.js';
+import {execFile, spawn} from 'node:child_process';
+import {networkInterfaces} from 'node:os';
+import {promisify} from 'node:util';
+import {detectLocalProxyType, planLaunch, type NetworkInfo} from './launcher.js';
+import {promptCli, promptConfirm, promptFeatures, promptNetworkFailure} from './ui.js';
 
-async function fetchIpInfo(): Promise<string> {
-  const apiUrl = process.env.SCC_API || 'https://ipinfo.io';
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+const execFileAsync = promisify(execFile);
+
+async function checkNetwork(): Promise<NetworkInfo> {
+  const proxyType = detectLocalProxyType(process.env, networkInterfaces());
   try {
-    const response = await fetch(apiUrl, {
-      signal: controller.signal,
-      headers: {'user-agent': 'agent-launcher'}
+    const {stdout} = await execFileAsync('curl', ['-fsSL', '--max-time', '5', 'cip.cc'], {
+      timeout: 7000,
+      maxBuffer: 1024 * 1024
     });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    const publicIpInfo = stdout.trim();
+    if (!publicIpInfo) {
+      throw new Error('curl cip.cc returned an empty response');
     }
-    return await response.text();
-  } finally {
-    clearTimeout(timeout);
+    return {publicIpInfo, proxyType};
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`curl cip.cc failed (${proxyType}): ${message}`);
   }
 }
 
@@ -37,7 +41,8 @@ async function main(): Promise<void> {
     selectCli: promptCli,
     selectFeatures: promptFeatures,
     confirm: promptConfirm,
-    fetchIpInfo
+    confirmNetworkFailure: promptNetworkFailure,
+    checkNetwork
   });
 
   if (plan.debugCommand) {

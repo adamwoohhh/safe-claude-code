@@ -1,5 +1,6 @@
 import {access} from 'node:fs/promises';
 import {constants} from 'node:fs';
+import type {NetworkInterfaceInfo} from 'node:os';
 import path from 'node:path';
 import {buildFeatureArgs, type CliName, discoverFeatures, type Feature} from './features.js';
 
@@ -11,8 +12,15 @@ export type DetectedCli = {
 export type LaunchPlan = {
   cli: DetectedCli;
   args: string[];
-  ipInfo: string;
+  networkInfo: NetworkInfo;
   debugCommand?: string;
+};
+
+export type ProxyType = 'no-proxy' | 'http-proxy' | 'socks5-proxy' | 'virtual-nic-proxy' | 'unknown';
+
+export type NetworkInfo = {
+  publicIpInfo: string;
+  proxyType: ProxyType;
 };
 
 export type PlanLaunchOptions = {
@@ -20,8 +28,9 @@ export type PlanLaunchOptions = {
   env: NodeJS.ProcessEnv;
   selectCli: (clis: DetectedCli[]) => Promise<DetectedCli>;
   selectFeatures: (features: Feature[], cli: CliName) => Promise<Feature[]>;
-  confirm: (cli: CliName, ipInfo: string) => Promise<boolean>;
-  fetchIpInfo: () => Promise<string>;
+  confirm: (cli: CliName, networkInfo: NetworkInfo) => Promise<boolean>;
+  confirmNetworkFailure: (message: string) => Promise<boolean>;
+  checkNetwork: () => Promise<NetworkInfo>;
 };
 
 async function executablePath(dir: string, command: CliName): Promise<string | undefined> {
@@ -55,16 +64,6 @@ export function invalidDebugValue(value: string | undefined): boolean {
   return value === undefined || value === '' || /^(0|false|no|off)$/i.test(value);
 }
 
-function trim(value: string): string {
-  return value.trim();
-}
-
-function validateIpInfo(ipInfo: string, apiUrl: string): void {
-  if (!trim(ipInfo).startsWith('{')) {
-    throw new Error(`Invalid JSON from ${apiUrl}`);
-  }
-}
-
 function shellQuote(arg: string): string {
   if (/^[A-Za-z0-9_./:=@+-]+$/.test(arg)) {
     return arg;
@@ -76,8 +75,40 @@ export function formatLaunchCommand(cli: string, args: string[]): string {
   return ['Launch command:', cli, ...args].map((part, index) => index === 0 ? part : shellQuote(part)).join(' ');
 }
 
+export function detectLocalProxyType(
+  env: NodeJS.ProcessEnv,
+  interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>
+): ProxyType {
+  const proxyValue = [
+    env.ALL_PROXY,
+    env.all_proxy,
+    env.HTTPS_PROXY,
+    env.https_proxy,
+    env.HTTP_PROXY,
+    env.http_proxy
+  ].find(value => value?.trim());
+
+  if (proxyValue) {
+    return /^socks5?:\/\//i.test(proxyValue) ? 'socks5-proxy' : 'http-proxy';
+  }
+
+  for (const [name, addresses] of Object.entries(interfaces)) {
+    if (!/^(utun|tun|tap|ppp|wg|tailscale|zt|warp|clash|mihomo)/i.test(name)) {
+      continue;
+    }
+    if (addresses?.some(address => !address.internal)) {
+      return 'virtual-nic-proxy';
+    }
+  }
+
+  return 'no-proxy';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function planLaunch(options: PlanLaunchOptions): Promise<LaunchPlan> {
-  const apiUrl = options.env.SCC_API || 'https://ipinfo.io';
   const clis = await detectClis(options.env.PATH ?? '');
 
   if (clis.length === 0) {
@@ -91,15 +122,21 @@ export async function planLaunch(options: PlanLaunchOptions): Promise<LaunchPlan
     ? await options.selectFeatures(features, cli.name)
     : features;
 
-  let ipInfo: string;
+  let networkInfo: NetworkInfo;
   try {
-    ipInfo = await options.fetchIpInfo();
-  } catch {
-    throw new Error(`Failed to fetch ${apiUrl}`);
+    networkInfo = await options.checkNetwork();
+  } catch (error) {
+    const message = errorMessage(error);
+    if (!(await options.confirmNetworkFailure(message))) {
+      throw new Error('Cancelled.');
+    }
+    networkInfo = {
+      publicIpInfo: `Public IP check skipped after failure: ${message}`,
+      proxyType: 'unknown'
+    };
   }
-  validateIpInfo(ipInfo, apiUrl);
 
-  if (!(await options.confirm(cli.name, ipInfo))) {
+  if (networkInfo.proxyType !== 'unknown' && !(await options.confirm(cli.name, networkInfo))) {
     throw new Error('Cancelled.');
   }
 
@@ -111,7 +148,7 @@ export async function planLaunch(options: PlanLaunchOptions): Promise<LaunchPlan
   return {
     cli,
     args,
-    ipInfo,
+    networkInfo,
     debugCommand
   };
 }

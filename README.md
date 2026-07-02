@@ -69,14 +69,19 @@ Select features to enable:
 
 超过 5 项的分组会默认折叠；列表最多展示 20 行。
 
-完成选择后，启动器会请求 `https://ipinfo.io`，展示响应，并要求确认：
+完成选择后，启动器会执行 `curl cip.cc` 探测公网 IP，展示响应和本地代理类型，并要求确认：
 
 ```text
-IPinfo response:
-{"ip":"1.2.3.4","city":"Beijing","country":"CN","timezone":"Asia/Shanghai"}
+Public IP check:
+IP	: 1.2.3.4
+地址	: 中国  北京
+
+Local proxy type: HTTP proxy
 
 Continue and launch codex? [Y/n]
 ```
+
+本地代理类型会显示为 `no proxy`、`HTTP proxy`、`SOCKS5 proxy`、`virtual NIC proxy` 或 `unknown`。如果公网 IP 探测失败，启动器会打印失败信息，并询问是否忽略该失败继续启动。
 
 确认后，参数会原样转发给最终 CLI：
 
@@ -119,7 +124,6 @@ claude --settings '{"skillOverrides":{"alpha":"off"},"enabledPlugins":{"plugin-a
 
 ## 环境变量
 
-- `SCC_API`: 覆盖启动前检查接口，默认 `https://ipinfo.io`
 - `AL_DEBUG`: 打印最终启动命令。`0`、`false`、`no`、`off` 视为关闭
 
 ## 开发
